@@ -126,14 +126,13 @@
         appendLog(decodedText, isPattern1);
     };
 
-    /**
-     * カメラ起動処理（背面カメラ強制制御）
+/**
+     * カメラ起動処理（背面カメラ優先制御）
      */
     const startScanner = () => {
         document.getElementById('btn-start').disabled = true;
         document.getElementById('btn-stop').disabled = false;
 
-        // 音声コンテキストの準備（ブラウザ制限回避のためクリックイベント内で実行必須）
         if (!state.audioContext) {
             state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
@@ -141,30 +140,29 @@
 
         state.html5QrCode = new Html5Qrcode("reader");
 
-        // スキャナー内部の各種オプション設定
         const config = { 
             fps: 10, 
-            qrbox: { width: 250, height: 100 }, // バーコード用に横長の枠を設定
+            qrbox: { width: 250, height: 100 }, 
             aspectRatio: 1.0,
-            videoConstraints: { width: { ideal: 1280 } } // 解像度の推奨値
+            videoConstraints: { width: { ideal: 1280 } } 
         };
         
-        // 背面カメラ（environment）を完全に強制する設定
+        // 【ここを修正】背面カメラ（environment）を優先する設定
         const cameraConfig = { 
-            facingMode: { exact: "environment" } 
+            facingMode: "environment" 
         };
 
         state.html5QrCode.start(
             cameraConfig, 
             config, 
             handleScanSuccess, 
-            (errorMessage) => { /* 読み取り失敗は毎フレーム発生するため無視 */ }
+            (errorMessage) => { /* 無視 */ }
         ).catch((err) => {
-            alert(`カメラの起動に失敗しました: ${err}\n(背面カメラが存在しないか、権限が拒否されています)`);
+            alert(`カメラの起動に失敗しました: ${err}`);
             resetButtons();
         });
     };
-
+    
     /**
      * カメラ停止処理
      */
