@@ -3,17 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>マイクロバーコード スキャナー (Wasm版)</title>
+    <title>マイクロQRスキャナー (ZXing版)</title>
+    <script src="https://unpkg.com/@zxing/library@latest"></script>
     <style>
         body { font-family: sans-serif; margin: 10px; background: #f0f4f8; text-align: center; }
         .container { max-width: 500px; margin: 0 auto; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        /* readerをvideo要素向けにスタイリング変更 */
-        #camera-video { width: 100%; min-height: 250px; background: #000; margin-bottom: 15px; border-radius: 4px; object-fit: cover; }
+        video { width: 100%; min-height: 250px; background: #000; margin-bottom: 15px; border-radius: 4px; object-fit: cover; }
         .btn { padding: 12px 24px; font-size: 16px; font-weight: bold; color: #fff; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
         .btn-start { background-color: #007bff; }
         .btn-stop { background-color: #dc3545; }
         .btn:disabled { background-color: #6c757d; cursor: not-allowed; opacity: 0.7; }
-        #log-area { margin-top: 15px; text-align: left; max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; border: 1px solid #dee2e6; font-family: monospace; }
+        #log-area { margin-top: 15px; text-align: left; max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; border: 1px solid #dee2e6; font-family: monospace; font-size: 14px; }
         .log-item { border-bottom: 1px dashed #ccc; padding: 4px 0; }
         .success-text { color: #28a745; font-weight: bold; }
         .error-text { color: #dc3545; font-weight: bold; }
@@ -22,198 +22,89 @@
 <body>
 
 <div class="container">
-    <h2>連続スキャナー (MicroQR対応)</h2>
-    
-    <video id="camera-video" autoplay playsinline></video>
-    
+    <h2>マイクロQR連続スキャナー</h2>
+    <video id="camera-video"></video>
     <div>
         <button id="btn-start" class="btn btn-start">スキャン開始</button>
         <button id="btn-stop" class="btn btn-stop" disabled>スキャン停止</button>
     </div>
-
     <div id="log-area"></div>
 </div>
 
-<script type="module">
-    import { readBarcodesFromVideoElement } from "https://cdn.jsdelivr.net/npm/zxing-wasm@1.3.2/dist/reader/index.js";
+<script>
+(() => {
+    'use strict';
 
-    (() => {
-        'use strict';
+    const state = {
+        codeReader: new ZXing.BrowserMultiFormatReader(),
+        audioContext: null,
+        lastScannedText: '',
+        lastScannedTime: 0,
+        cooldownMs: 2000
+    };
 
-        // 状態管理（ストリームやループIDを追加）
-        const state = {
-            audioContext: null,
-            lastScannedText: '',
-            lastScannedTime: 0,
-            cooldownMs: 2000,
-            stream: null,
-            scanLoopId: null,
-            isScanning: false
-        };
+    // 音声出力（Web Audio API）
+    const playBeep = (freq, type, duration) => {
+        if (!state.audioContext) state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = state.audioContext.createOscillator();
+        const gain = state.audioContext.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, state.audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, state.audioContext.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(state.audioContext.destination);
+        osc.start();
+        osc.stop(state.audioContext.currentTime + duration);
+    };
 
-        /**
-         * Web Audio APIによるビープ音生成
-         */
-        const playBeep = (frequency, type, duration) => {
-            if (!state.audioContext) {
-                state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            const ctx = state.audioContext;
-            
-            const oscillator = ctx.createOscillator();
-            const gainNode = ctx.createGain();
+    // ログ記録と判定
+    const handleScanSuccess = (decodedText) => {
+        const now = Date.now();
+        if (decodedText === state.lastScannedText && (now - state.lastScannedTime) < state.cooldownMs) return;
 
-            oscillator.type = type;
-            oscillator.frequency.setValueAtTime(frequency, ctx.currentTime);
-            
-            gainNode.gain.setValueAtTime(1, ctx.currentTime);
-            gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+        state.lastScannedText = decodedText;
+        state.lastScannedTime = now;
 
-            oscillator.connect(gainNode);
-            gainNode.connect(ctx.destination);
+        const isPattern1 = (decodedText.charAt(3) === '1');
+        
+        // 音声フィードバック
+        isPattern1 ? playBeep(880, 'sine', 0.15) : playBeep(220, 'sawtooth', 0.3);
+        
+        // UI更新
+        const logArea = document.getElementById('log-area');
+        const status = isPattern1 ? '<span class="success-text">[条件一致]</span>' : '<span class="error-text">[条件不一致]</span>';
+        logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} : ${status} ${decodedText}</div>`);
+    };
 
-            oscillator.start(ctx.currentTime);
-            oscillator.stop(ctx.currentTime + duration);
-        };
+    const startScanner = async () => {
+        document.getElementById('btn-start').disabled = true;
+        document.getElementById('btn-stop').disabled = false;
 
-        const playSound1 = () => playBeep(880, 'sine', 0.15);
-        const playSound2 = () => playBeep(220, 'sawtooth', 0.3);
+        const videoEl = document.getElementById('camera-video');
+        
+        try {
+            // 背面カメラ優先設定でストリーム取得
+            const videoInputDevices = await state.codeReader.listVideoInputDevices();
+            const selectedDeviceId = videoInputDevices.find(device => /back|rear|environment/i.test(device.label))?.deviceId || videoInputDevices[0].deviceId;
 
-        /**
-         * 画面上のログ領域への追記処理
-         */
-        const appendLog = (text, isPattern1) => {
-            const logArea = document.getElementById('log-area');
-            const timeStr = new Date().toLocaleTimeString();
-            const statusHtml = isPattern1 
-                ? `<span class="success-text">[条件一致]</span>` 
-                : `<span class="error-text">[条件不一致]</span>`;
-            
-            const logHtml = `<div class="log-item">${timeStr} : ${statusHtml} ${text}</div>`;
-            logArea.insertAdjacentHTML('afterbegin', logHtml);
-        };
+            await state.codeReader.decodeFromVideoDevice(selectedDeviceId, videoEl, (result, err) => {
+                if (result) handleScanSuccess(result.getText());
+            });
+        } catch (err) {
+            alert(`起動エラー: ${err}`);
+            stopScanner();
+        }
+    };
 
-        /**
-         * バーコード読み取り成功時のメインロジック処理
-         */
-        const handleScanSuccess = (decodedText) => {
-            const now = Date.now();
+    const stopScanner = () => {
+        state.codeReader.reset();
+        document.getElementById('btn-start').disabled = false;
+        document.getElementById('btn-stop').disabled = true;
+    };
 
-            const isSameText = (decodedText === state.lastScannedText);
-            const isCoolingDown = (now - state.lastScannedTime) < state.cooldownMs;
-            if (isSameText && isCoolingDown) {
-                return; 
-            }
-
-            state.lastScannedText = decodedText;
-            state.lastScannedTime = now;
-
-            const targetChar = decodedText.charAt(3);
-            const isPattern1 = (targetChar === '1');
-
-            if (isPattern1) {
-                playSound1();
-            } else {
-                playSound2();
-            }
-            
-            appendLog(decodedText, isPattern1);
-        };
-
-        /**
-         * 毎フレームのスキャン実行処理（再帰）
-         */
-        const scanFrame = async (videoElement) => {
-            // スキャン停止フラグが立っていたらループを抜ける
-            if (!state.isScanning) return;
-
-            if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
-                try {
-                    const options = {
-                        formats: ["MicroQRCode", "QRCode"], 
-                        maxSymbols: 1
-                    };
-                    const results = await readBarcodesFromVideoElement(videoElement, options);
-
-                    if (results && results.length > 0) {
-                        handleScanSuccess(results[0].text);
-                    }
-                } catch (error) {
-                    // 未検出エラーは無視
-                }
-            }
-            // 次のフレームで再起呼び出し
-            state.scanLoopId = requestAnimationFrame(() => scanFrame(videoElement));
-        };
-
-        /**
-         * カメラ起動処理
-         */
-        const startScanner = async () => {
-            document.getElementById('btn-start').disabled = true;
-            document.getElementById('btn-stop').disabled = false;
-
-            if (!state.audioContext) {
-                state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            state.audioContext.resume();
-
-            const videoEl = document.getElementById('camera-video');
-
-            try {
-                // 背面カメラ優先の制約
-                const constraints = {
-                    video: { facingMode: "environment", width: { ideal: 1280 } }
-                };
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                
-                videoEl.srcObject = stream;
-                state.stream = stream;
-                state.isScanning = true;
-                
-                // スキャンループ開始
-                scanFrame(videoEl);
-            } catch (err) {
-                alert(`カメラの起動に失敗しました: ${err.message}`);
-                resetButtons();
-            }
-        };
-
-        /**
-         * カメラ停止処理
-         */
-        const stopScanner = () => {
-            state.isScanning = false;
-            
-            if (state.scanLoopId) {
-                cancelAnimationFrame(state.scanLoopId);
-                state.scanLoopId = null;
-            }
-            
-            // カメラストリームのトラックをすべて停止（配列メソッドで処理）
-            if (state.stream) {
-                state.stream.getTracks().map(track => track.stop());
-                state.stream = null;
-            }
-            
-            const videoEl = document.getElementById('camera-video');
-            videoEl.srcObject = null;
-            
-            resetButtons();
-        };
-
-        const resetButtons = () => {
-            document.getElementById('btn-start').disabled = false;
-            document.getElementById('btn-stop').disabled = true;
-        };
-
-        // イベントリスナーの登録
-        window.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('btn-start').addEventListener('click', startScanner);
-            document.getElementById('btn-stop').addEventListener('click', stopScanner);
-        });
-
-    })();
+    document.getElementById('btn-start').addEventListener('click', startScanner);
+    document.getElementById('btn-stop').addEventListener('click', stopScanner);
+})();
 </script>
 
 </body>
