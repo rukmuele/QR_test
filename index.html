@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>マイクロQRスキャナー (音響対応版)</title>
+    <title>マイクロQRスキャナー</title>
     <script src="https://unpkg.com/@zxing/library@latest"></script>
     <style>
         body { font-family: sans-serif; margin: 10px; background: #f0f4f8; text-align: center; }
@@ -22,7 +22,7 @@
 <body>
 
 <div class="container">
-    <h2>マイクロQR連続スキャナー</h2>
+    <h2>マイクロQRスキャナー</h2>
     <video id="camera-video"></video>
     <div>
         <button id="btn-start" class="btn btn-start">スキャン開始</button>
@@ -40,7 +40,7 @@
         audioContext: null,
         lastScannedText: '',
         lastScannedTime: 0,
-        cooldownMs: 2000
+        cooldownMs: 1000
     };
 
     // 音声出力用ヘルパー関数
@@ -48,33 +48,41 @@
         if (!state.audioContext) state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const ctx = state.audioContext;
 
-        if (type === 'success') {
-            // ピンポン：440Hz -> 880Hz
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.frequency.setValueAtTime(440, ctx.currentTime);
-            osc.frequency.linearRampToValueAtTime(880, ctx.currentTime + 0.1);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start();
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
-            osc.stop(ctx.currentTime + 0.2);
-        } else {
-            // ブブー：150Hzを短く2回
-            [0, 0.15].forEach(delay => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(150, ctx.currentTime + delay);
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(ctx.currentTime + delay);
-                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.1);
-                osc.stop(ctx.currentTime + delay + 0.1);
-            });
-        }
+const playSound = (type) => {
+    // AudioContextの初期化
+    if (!state.audioContext) {
+        state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const ctx = state.audioContext;
+
+    // 音を作るヘルパー関数（カプセル化）
+    const createTone = (freq, start, duration, type = 'sine') => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, start);
+        
+        gain.gain.setValueAtTime(0.3, start);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc.start(start);
+        osc.stop(start + duration);
     };
 
+    if (type === 'success') {
+        // ピンポン：高い音を短く2回、後半を少し高く
+        createTone(587.33, ctx.currentTime, 0.15); // D5
+        createTone(880.00, ctx.currentTime + 0.15, 0.3); // A5
+    } else {
+        // ブブー：低い音を少し引きずるように
+        createTone(110.00, ctx.currentTime, 0.5, 'sawtooth'); // A2
+    }
+};
+        
     const handleScanSuccess = (decodedText) => {
         const now = Date.now();
         if (decodedText === state.lastScannedText && (now - state.lastScannedTime) < state.cooldownMs) return;
@@ -88,7 +96,7 @@
         playSound(isPattern1 ? 'success' : 'error');
         
         const logArea = document.getElementById('log-area');
-        const status = isPattern1 ? '<span class="success-text">[条件一致]</span>' : '<span class="error-text">[条件不一致]</span>';
+        const status = isPattern1 ? '<span class="success-text">[4桁目：1]</span>' : '<span class="error-text">[4桁目：1以外]</span>';
         logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} : ${status} ${decodedText}</div>`);
     };
 
