@@ -131,7 +131,7 @@
         appendLog(decodedText, isPattern1);
     };
 
-    /**
+/**
      * カメラ起動処理
      */
     const startScanner = () => {
@@ -139,7 +139,7 @@
         document.getElementById('btn-start').disabled = true;
         document.getElementById('btn-stop').disabled = false;
 
-        // AudioContextの初期化（iOS等はボタンクリック等のユーザーアクション内で初期化しないと音が鳴らない）
+        // AudioContextの初期化
         if (!state.audioContext) {
             state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
@@ -147,15 +147,15 @@
 
         state.html5QrCode = new Html5Qrcode("reader");
 
-        // 背面カメラ指定と、マイクロバーコード用になるべく高解像度を要求
+        // 【修正箇所】設定を正しいフォーマットに分離
         const config = { 
             fps: 10, 
-            qrbox: { width: 250, height: 100 }, // バーコード用に横長の読み取り枠
-            aspectRatio: 1.0
+            qrbox: { width: 250, height: 100 },
+            aspectRatio: 1.0,
+            videoConstraints: { width: { ideal: 1280 } }
         };
         const cameraConfig = { 
-            facingMode: "environment",
-            width: { ideal: 1280 }
+            facingMode: "environment"
         };
 
         state.html5QrCode.start(
@@ -168,7 +168,7 @@
             resetButtons();
         });
     };
-
+    
     /**
      * カメラ停止処理
      */
