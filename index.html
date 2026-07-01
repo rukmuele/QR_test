@@ -4,61 +4,195 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>マイクロバーコード スキャナー</title>
-<script type="text/javascript" nonce="93a8d812a08c420ab17ccae7a43" src="//local.adguard.org?ts=1782909595377&amp;type=content-script&amp;dmn=chatgpt.com&amp;url=https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Festuary%2Fcontent%3Fid%3Dfile_00000000f9e07209947705b40bcc369a%26fn%3Dmicro_barcode_scanner_latest.html%26cd%3Dattachment%26ts%3D495253%26p%3Dfs%26cid%3D1%26sig%3D095d2682954e15270c67ba5cc6eb4366491f699ef7a8688335df8d9a4b98bb59%26v%3D0&amp;app=chrome.exe&amp;css=3&amp;js=1&amp;rel=1&amp;rji=1&amp;sbe=1"></script><script type="text/javascript" nonce="93a8d812a08c420ab17ccae7a43" src="//local.adguard.org?ts=1782909595377&amp;name=AdGuard%20Extra&amp;name=AdGuard%20Popup%20Blocker&amp;type=user-script"></script><script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
-body{font-family:sans-serif;background:#f0f4f8;margin:10px;text-align:center}
-.container{max-width:520px;margin:auto;background:#fff;padding:15px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,.1)}
-#reader{width:100%;min-height:260px;background:#000}
-button{padding:10px 20px;margin:5px}
-#log{margin-top:12px;text-align:left;max-height:180px;overflow:auto;border:1px solid #ccc;padding:8px;font-family:monospace}
-.ok{color:#198754;font-weight:bold}.ng{color:#dc3545;font-weight:bold}
+  body { font-family: sans-serif; background: #f0f4f8; margin: 10px; text-align: center; }
+  .container { max-width: 520px; margin: auto; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,.1); }
+  #reader { width: 100%; min-height: 260px; background: #000; }
+  button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: 0.6; }
+  #log { margin-top: 12px; text-align: left; max-height: 180px; overflow: auto; border: 1px solid #ccc; padding: 8px; font-family: monospace; }
+  .ok { color: #198754; font-weight: bold; }
+  .ng { color: #dc3545; font-weight: bold; }
 </style>
 </head>
 <body>
 <div class="container">
-<h2>連続スキャナー</h2>
-<div id="reader"></div>
-<button id="start">開始</button>
-<button id="stop" disabled>停止</button>
-<div id="log"></div>
+  <h2>連続スキャナー</h2>
+  <div id="reader"></div>
+  <button id="btn-start">開始</button>
+  <button id="btn-stop" disabled>停止</button>
+  <div id="log"></div>
 </div>
+
 <script>
-(()=>{
-const st={qr:null,ctx:null,last:"",time:0,cool:2000};
-const beep=(f,t,d)=>{st.ctx??=new(window.AudioContext||window.webkitAudioContext)();const c=st.ctx,o=c.createOscillator(),g=c.createGain();o.type=t;o.frequency.value=f;o.connect(g);g.connect(c.destination);g.gain.setValueAtTime(1,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+d);o.start();o.stop(c.currentTime+d);}
-const ok=()=>beep(880,"sine",.15),ng=()=>beep(220,"sawtooth",.3);
-const log=(txt,flag)=>document.querySelector("#log").insertAdjacentHTML("afterbegin",`<div>${new Date().toLocaleTimeString()} ${flag?'<span class="ok">OK</span>':'<span class="ng">NG</span>'} ${txt}</div>`);
-const scan=txt=>{const n=Date.now();if(txt===st.last&&n-st.time<st.cool)return;st.last=txt;st.time=n;const f=txt.charAt(3)==="1";f?ok():ng();log(txt,f);}
-async function backId(){
- await navigator.mediaDevices.getUserMedia({video:true}).then(s=>s.getTracks().forEach(t=>t.stop()));
- const cams=await Html5Qrcode.getCameras();
- const keys=["back","rear","environment","背面","後","wide","ultra"];
- const hit=cams.find(c=>keys.some(k=>(c.label||"").toLowerCase().includes(k)));
- return {id:(hit||cams[cams.length-1]||cams[0]).id,cams};
-}
-async function start(){
- document.start.disabled=true;document.stop.disabled=false;
- st.ctx??=new(window.AudioContext||window.webkitAudioContext)();await st.ctx.resume();
- st.qr=new Html5Qrcode("reader");
- const cfg={fps:15,qrbox:{width:260,height:120}};
- try{
-  const {id}=await backId();
-  await st.qr.start(id,cfg,scan);
- }catch(e){
-  try{
-   await st.qr.start({facingMode:{exact:"environment"}},cfg,scan);
-  }catch{
-   await st.qr.start({facingMode:"environment"},cfg,scan);
-  }
- }
-}
-async function stop(){
- if(st.qr){await st.qr.stop();await st.qr.clear();}
- document.start.disabled=false;document.stop.disabled=true;
-}
-document.querySelector("#start").onclick=start;
-document.querySelector("#stop").onclick=stop;
-})();
+/**
+ * スキャナーアプリのファクトリ関数
+ * 状態と依存関係を完全にカプセル化する
+ */
+const createScannerApp = (config) => {
+  // --- 内部状態（カプセル化） ---
+  const state = {
+    qr: null,
+    audioCtx: null,
+    lastText: "",
+    lastScanTime: 0
+  };
+
+  // --- DOM要素の取得（副作用） ---
+  const ui = {
+    startBtn: document.getElementById(config.dom.startBtn),
+    stopBtn: document.getElementById(config.dom.stopBtn),
+    logArea: document.getElementById(config.dom.logArea)
+  };
+
+  // --- 純粋関数群（副作用を持たないデータ変換） ---
+  // カメラ名にターゲットキーワードが含まれているか判定
+  const isTargetCamera = (label) => 
+    config.cameraKeywords.some(keyword => (label || "").toLowerCase().includes(keyword));
+
+  // 結果の成否を判定（4文字目が"1"ならOKとする元の仕様を踏襲）
+  const evaluateScanResult = (text) => text.charAt(3) === "1";
+
+  // --- 副作用関数群 ---
+  // 音声を再生する関数（AudioContextの初期化とオシレーター制御）
+  const playBeep = (freq, type, duration) => {
+    state.audioCtx = state.audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = state.audioCtx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = type;
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    gain.gain.setValueAtTime(1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    
+    osc.start();
+    osc.stop(ctx.currentTime + duration);
+  };
+
+  // ログを画面に出力する関数
+  const renderLog = (text, isSuccess) => {
+    const timeStr = new Date().toLocaleTimeString();
+    const statusTag = isSuccess ? '<span class="ok">OK</span>' : '<span class="ng">NG</span>';
+    const logHtml = `<div>${timeStr} ${statusTag} ${text}</div>`;
+    ui.logArea.insertAdjacentHTML("afterbegin", logHtml);
+  };
+
+  // カメラ権限を要求し、取得したストリームのトラックを即座に停止する関数（mapで処理）
+  const requestCameraPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().map(track => track.stop()); // forEachを使わずmapで副作用を実行
+    } catch (error) {
+      console.warn("カメラの初期権限取得に失敗しました:", error);
+    }
+  };
+
+  // 背面カメラのIDを特定する非同期関数
+  const resolveBackCameraId = async () => {
+    await requestCameraPermission();
+    const cameras = await Html5Qrcode.getCameras();
+    if (cameras.length === 0) throw new Error("カメラが見つかりません");
+
+    const hit = cameras.find(cam => isTargetCamera(cam.label));
+    // ヒットすればそれ、無ければ最後のカメラ（大抵背面）、それもなければ最初のカメラ
+    return (hit || cameras[cameras.length - 1] || cameras[0]).id;
+  };
+
+  // スキャン成功時のコールバック
+  const onScanSuccess = (decodedText) => {
+    const now = Date.now();
+    // クールダウン判定
+    if (decodedText === state.lastText && (now - state.lastScanTime) < config.coolDownMs) {
+      return;
+    }
+
+    state.lastText = decodedText;
+    state.lastScanTime = now;
+
+    const isSuccess = evaluateScanResult(decodedText);
+    
+    // 判定に応じたビープ音再生とログ出力
+    if (isSuccess) {
+      playBeep(config.beep.ok.freq, config.beep.ok.type, config.beep.ok.duration);
+    } else {
+      playBeep(config.beep.ng.freq, config.beep.ng.type, config.beep.ng.duration);
+    }
+    renderLog(decodedText, isSuccess);
+  };
+
+  // --- メインコントローラー（イベントハンドラ） ---
+  const startScanner = async () => {
+    ui.startBtn.disabled = true;
+    ui.stopBtn.disabled = false;
+
+    // iOS/Android向けにAudioContextをユーザーアクション内でresumeする
+    state.audioCtx = state.audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (state.audioCtx.state === 'suspended') {
+      await state.audioCtx.resume();
+    }
+
+    state.qr = new Html5Qrcode(config.dom.reader);
+
+    try {
+      const cameraId = await resolveBackCameraId();
+      await state.qr.start(cameraId, config.qrConfig, onScanSuccess, () => {/* 失敗時の処理は無視 */});
+    } catch (error) {
+      console.warn("カメラID指定での起動失敗、フォールバックを試みます:", error);
+      // フォールバック処理
+      try {
+        await state.qr.start({ facingMode: { exact: "environment" } }, config.qrConfig, onScanSuccess, () => {});
+      } catch (fallbackError) {
+        await state.qr.start({ facingMode: "environment" }, config.qrConfig, onScanSuccess, () => {});
+      }
+    }
+  };
+
+  const stopScanner = async () => {
+    if (state.qr) {
+      await state.qr.stop();
+      await state.qr.clear();
+      state.qr = null;
+    }
+    ui.startBtn.disabled = false;
+    ui.stopBtn.disabled = true;
+  };
+
+  // --- 初期化処理 ---
+  const init = () => {
+    ui.startBtn.addEventListener("click", startScanner);
+    ui.stopBtn.addEventListener("click", stopScanner);
+  };
+
+  return { init };
+};
+
+// --- アプリケーションの起動 ---
+document.addEventListener("DOMContentLoaded", () => {
+  // 設定オブジェクト（ハードコードを排除）
+  const appConfig = {
+    dom: {
+      startBtn: "btn-start",
+      stopBtn: "btn-stop",
+      logArea: "log",
+      reader: "reader"
+    },
+    cameraKeywords: ["back", "rear", "environment", "背面", "後", "wide", "ultra"],
+    coolDownMs: 2000,
+    qrConfig: { fps: 15, qrbox: { width: 260, height: 120 } },
+    beep: {
+      ok: { freq: 880, type: "sine", duration: 0.15 },
+      ng: { freq: 220, type: "sawtooth", duration: 0.3 }
+    }
+  };
+
+  const app = createScannerApp(appConfig);
+  app.init();
+});
 </script>
 </body>
 </html>
