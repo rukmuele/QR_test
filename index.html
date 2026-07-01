@@ -147,7 +147,7 @@
 
         state.html5QrCode = new Html5Qrcode("reader");
 
-        // 【修正箇所】設定を正しいフォーマットに分離
+// 背面カメラ指定と、マイクロバーコード用になるべく高解像度を要求
         const config = { 
             fps: 10, 
             qrbox: { width: 250, height: 100 },
@@ -155,9 +155,10 @@
             videoConstraints: { width: { ideal: 1280 } }
         };
         const cameraConfig = { 
-            facingMode: "environment"
+            // 強制的に背面カメラを指定（もし背面がない場合はエラーになる）
+            facingMode: { exact: "environment" } 
         };
-
+        
         state.html5QrCode.start(
             cameraConfig, 
             config, 
