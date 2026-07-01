@@ -47,26 +47,23 @@
     };
 
     /**
-     * Web Audio APIによるビープ音生成（純粋関数的アプローチ）
+     * Web Audio APIによるビープ音生成
      * @param {number} frequency - 音の高さ（周波数）
      * @param {string} type - 'sine' | 'square' | 'sawtooth' | 'triangle'
      * @param {number} duration - 再生時間（秒）
      */
     const playBeep = (frequency, type, duration) => {
-        // AudioContextが未初期化なら初期化（ユーザーアクション後に実行必須）
         if (!state.audioContext) {
             state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
         const ctx = state.audioContext;
         
-        // 発信器と音量調整器の生成
         const oscillator = ctx.createOscillator();
         const gainNode = ctx.createGain();
 
         oscillator.type = type;
         oscillator.frequency.setValueAtTime(frequency, ctx.currentTime);
         
-        // 音の減衰設定（プツッというノイズを防ぐ）
         gainNode.gain.setValueAtTime(1, ctx.currentTime);
         gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
 
@@ -77,14 +74,14 @@
         oscillator.stop(ctx.currentTime + duration);
     };
 
-    // サウンドのプリセット
-    const playSound1 = () => playBeep(880, 'sine', 0.15);    // 成功音（高めのピポッ）
-    const playSound2 = () => playBeep(220, 'sawtooth', 0.3); // エラー音（低めのブー）
+    // 音声のプリセット
+    const playSound1 = () => playBeep(880, 'sine', 0.15);    // 条件一致：ピポッ（高音）
+    const playSound2 = () => playBeep(220, 'sawtooth', 0.3); // 条件不一致：ブー（低音）
 
     /**
-     * UIへのログ追記処理
+     * 画面上のログ領域への追記処理
      * @param {string} text - 読み取った文字列
-     * @param {boolean} isPattern1 - 条件（4文字目が1）を満たすか
+     * @param {boolean} isPattern1 - 4文字目が1か
      */
     const appendLog = (text, isPattern1) => {
         const logArea = document.getElementById('log-area');
@@ -94,18 +91,17 @@
             : `<span class="error-text">[条件不一致]</span>`;
         
         const logHtml = `<div class="log-item">${timeStr} : ${statusHtml} ${text}</div>`;
-        // 先頭に追加していく
         logArea.insertAdjacentHTML('afterbegin', logHtml);
     };
 
     /**
-     * バーコード読み取り成功時のメイン処理
+     * バーコード読み取り成功時のメインロジック処理
      * @param {string} decodedText - 読み取った文字列
      */
     const handleScanSuccess = (decodedText) => {
         const now = Date.now();
 
-        // 1. チャタリング防止（直近と同じ文字列、かつクールダウン時間内の場合は無視）
+        // 1. チャタリング防止（直近と同じ文字列、かつクールダウン時間内の場合は処理をスキップ）
         const isSameText = (decodedText === state.lastScannedText);
         const isCoolingDown = (now - state.lastScannedTime) < state.cooldownMs;
         if (isSameText && isCoolingDown) {
@@ -117,11 +113,10 @@
         state.lastScannedTime = now;
 
         // 2. ロジック判定（左から4文字目 = インデックス3 をチェック）
-        // 例外処理: 4文字未満のバーコードを読み取った場合は安全に undefined 判定へ
         const targetChar = decodedText.charAt(3);
         const isPattern1 = (targetChar === '1');
 
-        // 3. 音声再生とUI更新
+        // 3. 音声再生とUI更新（副作用の実行）
         if (isPattern1) {
             playSound1();
         } else {
@@ -131,15 +126,14 @@
         appendLog(decodedText, isPattern1);
     };
 
-/**
-     * カメラ起動処理
+    /**
+     * カメラ起動処理（背面カメラ強制制御）
      */
     const startScanner = () => {
-        // ボタン制御
         document.getElementById('btn-start').disabled = true;
         document.getElementById('btn-stop').disabled = false;
 
-        // AudioContextの初期化
+        // 音声コンテキストの準備（ブラウザ制限回避のためクリックイベント内で実行必須）
         if (!state.audioContext) {
             state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
@@ -147,29 +141,30 @@
 
         state.html5QrCode = new Html5Qrcode("reader");
 
-// 背面カメラ指定と、マイクロバーコード用になるべく高解像度を要求
+        // スキャナー内部の各種オプション設定
         const config = { 
             fps: 10, 
-            qrbox: { width: 250, height: 100 },
+            qrbox: { width: 250, height: 100 }, // バーコード用に横長の枠を設定
             aspectRatio: 1.0,
-            videoConstraints: { width: { ideal: 1280 } }
-        };
-        const cameraConfig = { 
-            // 強制的に背面カメラを指定（もし背面がない場合はエラーになる）
-            facingMode: { exact: "environment" } 
+            videoConstraints: { width: { ideal: 1280 } } // 解像度の推奨値
         };
         
+        // 背面カメラ（environment）を完全に強制する設定
+        const cameraConfig = { 
+            facingMode: { exact: "environment" } 
+        };
+
         state.html5QrCode.start(
             cameraConfig, 
             config, 
             handleScanSuccess, 
             (errorMessage) => { /* 読み取り失敗は毎フレーム発生するため無視 */ }
         ).catch((err) => {
-            alert(`カメラの起動に失敗しました: ${err}`);
+            alert(`カメラの起動に失敗しました: ${err}\n(背面カメラが存在しないか、権限が拒否されています)`);
             resetButtons();
         });
     };
-    
+
     /**
      * カメラ停止処理
      */
