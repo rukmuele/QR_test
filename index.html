@@ -43,85 +43,30 @@
         cooldownMs: 1000
     };
 
-    // 音声出力用ヘルパー関数
     const playSound = (type) => {
-        if (!state.audioContext) state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (!state.audioContext) {
+            state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
         const ctx = state.audioContext;
 
-const playSound = (type) => {
-    // AudioContextの初期化
-    if (!state.audioContext) {
-        state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    const ctx = state.audioContext;
+        const createTone = (freq, start, duration, type = 'sine') => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, start);
+            gain.gain.setValueAtTime(0.3, start);
+            gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(start);
+            osc.stop(start + duration);
+        };
 
-    // 音を作るヘルパー関数（カプセル化）
-    const createTone = (freq, start, duration, type = 'sine') => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, start);
-        
-        gain.gain.setValueAtTime(0.3, start);
-        gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
-        
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        
-        osc.start(start);
-        osc.stop(start + duration);
-    };
-
-    if (type === 'success') {
-        // ピンポン：高い音を短く2回、後半を少し高く
-        createTone(587.33, ctx.currentTime, 0.15); // D5
-        createTone(880.00, ctx.currentTime + 0.15, 0.3); // A5
-    } else {
-        // ブブー：低い音を少し引きずるように
-        createTone(110.00, ctx.currentTime, 0.5, 'sawtooth'); // A2
-    }
-};
-        
-    const handleScanSuccess = (decodedText) => {
-        const now = Date.now();
-        if (decodedText === state.lastScannedText && (now - state.lastScannedTime) < state.cooldownMs) return;
-
-        state.lastScannedText = decodedText;
-        state.lastScannedTime = now;
-
-        const isPattern1 = (decodedText.charAt(3) === '1');
-        
-        // 音を鳴らす
-        playSound(isPattern1 ? 'success' : 'error');
-        
-        const logArea = document.getElementById('log-area');
-        const status = isPattern1 ? '<span class="success-text">[4桁目：1]</span>' : '<span class="error-text">[4桁目：1以外]</span>';
-        logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} : ${status} ${decodedText}</div>`);
-    };
-
-    const startScanner = async () => {
-        document.getElementById('btn-start').disabled = true;
-        document.getElementById('btn-stop').disabled = false;
-
-        const videoEl = document.getElementById('camera-video');
-        
-        try {
-            const videoInputDevices = await state.codeReader.listVideoInputDevices();
-            const selectedDeviceId = videoInputDevices.find(device => /back|rear|environment/i.test(device.label))?.deviceId || videoInputDevices[0].deviceId;
-
-            await state.codeReader.decodeFromVideoDevice(selectedDeviceId, videoEl, (result, err) => {
-                if (result) {
-                    const text = result.getText();
-                    if (text && text.length > 3) {
-                        handleScanSuccess(text);
-                    }
-                }
-            });
-        } catch (err) {
-            console.error(err);
-            alert(`起動エラー: ${err}`);
-            stopScanner();
+        if (type === 'success') {
+            createTone(587.33, ctx.currentTime, 0.15);
+            createTone(880.00, ctx.currentTime + 0.15, 0.3);
+        } else {
+            createTone(110.00, ctx.currentTime, 0.5, 'sawtooth');
         }
     };
 
@@ -131,10 +76,46 @@ const playSound = (type) => {
         document.getElementById('btn-stop').disabled = true;
     };
 
+    const handleScanSuccess = (decodedText) => {
+        const now = Date.now();
+        if (decodedText === state.lastScannedText && (now - state.lastScannedTime) < state.cooldownMs) return;
+
+        state.lastScannedText = decodedText;
+        state.lastScannedTime = now;
+
+        const isPattern1 = (decodedText.charAt(3) === '1');
+        playSound(isPattern1 ? 'success' : 'error');
+
+        const logArea = document.getElementById('log-area');
+        const status = isPattern1 ? '<span class="success-text">[4桁目：1]</span>' : '<span class="error-text">[4桁目：1以外]</span>';
+        logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} : ${status} ${decodedText}</div>`);
+    };
+
+    const startScanner = async () => {
+        document.getElementById('btn-start').disabled = true;
+        document.getElementById('btn-stop').disabled = false;
+        const videoEl = document.getElementById('camera-video');
+
+        try {
+            const devices = await state.codeReader.listVideoInputDevices();
+            const id = devices.find(d => /back|rear|environment/i.test(d.label))?.deviceId || devices[0]?.deviceId;
+            
+            await state.codeReader.decodeFromVideoDevice(id, videoEl, (result) => {
+                if (result) {
+                    const text = result.getText();
+                    if (text && text.length > 3) handleScanSuccess(text);
+                }
+            });
+        } catch (err) {
+            console.error(err);
+            alert(`起動エラー: ${err}`);
+            stopScanner();
+        }
+    };
+
     document.getElementById('btn-start').addEventListener('click', startScanner);
     document.getElementById('btn-stop').addEventListener('click', stopScanner);
 })();
 </script>
-
 </body>
 </html>
