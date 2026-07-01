@@ -1,195 +1,64 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>マイクロバーコード スキャナー</title>
-    <script src="https://unpkg.com/html5-qrcode"></script>
-    <style>
-        body { font-family: sans-serif; margin: 10px; background: #f0f4f8; text-align: center; }
-        .container { max-width: 500px; margin: 0 auto; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        #reader { width: 100%; min-height: 250px; background: #000; margin-bottom: 15px; }
-        .btn { padding: 12px 24px; font-size: 16px; font-weight: bold; color: #fff; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
-        .btn-start { background-color: #007bff; }
-        .btn-stop { background-color: #dc3545; }
-        #log-area { margin-top: 15px; text-align: left; max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; border: 1px solid #dee2e6; font-family: monospace; }
-        .log-item { border-bottom: 1px dashed #ccc; padding: 4px 0; }
-        .success-text { color: #28a745; font-weight: bold; }
-        .error-text { color: #dc3545; font-weight: bold; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>マイクロバーコード スキャナー</title>
+<script type="text/javascript" nonce="93a8d812a08c420ab17ccae7a43" src="//local.adguard.org?ts=1782909595377&amp;type=content-script&amp;dmn=chatgpt.com&amp;url=https%3A%2F%2Fchatgpt.com%2Fbackend-api%2Festuary%2Fcontent%3Fid%3Dfile_00000000f9e07209947705b40bcc369a%26fn%3Dmicro_barcode_scanner_latest.html%26cd%3Dattachment%26ts%3D495253%26p%3Dfs%26cid%3D1%26sig%3D095d2682954e15270c67ba5cc6eb4366491f699ef7a8688335df8d9a4b98bb59%26v%3D0&amp;app=chrome.exe&amp;css=3&amp;js=1&amp;rel=1&amp;rji=1&amp;sbe=1"></script><script type="text/javascript" nonce="93a8d812a08c420ab17ccae7a43" src="//local.adguard.org?ts=1782909595377&amp;name=AdGuard%20Extra&amp;name=AdGuard%20Popup%20Blocker&amp;type=user-script"></script><script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+body{font-family:sans-serif;background:#f0f4f8;margin:10px;text-align:center}
+.container{max-width:520px;margin:auto;background:#fff;padding:15px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,.1)}
+#reader{width:100%;min-height:260px;background:#000}
+button{padding:10px 20px;margin:5px}
+#log{margin-top:12px;text-align:left;max-height:180px;overflow:auto;border:1px solid #ccc;padding:8px;font-family:monospace}
+.ok{color:#198754;font-weight:bold}.ng{color:#dc3545;font-weight:bold}
+</style>
 </head>
 <body>
-
 <div class="container">
-    <h2>連続スキャナー</h2>
-    
-    <div id="reader"></div>
-    
-    <div>
-        <button id="btn-start" class="btn btn-start">スキャン開始</button>
-        <button id="btn-stop" class="btn btn-stop" disabled>スキャン停止</button>
-    </div>
-
-    <div id="log-area"></div>
+<h2>連続スキャナー</h2>
+<div id="reader"></div>
+<button id="start">開始</button>
+<button id="stop" disabled>停止</button>
+<div id="log"></div>
 </div>
-
 <script>
-(() => {
-    'use strict';
-
-    // 状態管理（カプセル化されたスコープ内で保持）
-    const state = {
-        html5QrCode: null,
-        audioContext: null,
-        lastScannedText: '',
-        lastScannedTime: 0,
-        cooldownMs: 2000 // チャタリング防止のクールダウン時間（ミリ秒）
-    };
-
-    /**
-     * Web Audio APIによるビープ音生成
-     * @param {number} frequency - 音の高さ（周波数）
-     * @param {string} type - 'sine' | 'square' | 'sawtooth' | 'triangle'
-     * @param {number} duration - 再生時間（秒）
-     */
-    const playBeep = (frequency, type, duration) => {
-        if (!state.audioContext) {
-            state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        const ctx = state.audioContext;
-        
-        const oscillator = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-
-        oscillator.type = type;
-        oscillator.frequency.setValueAtTime(frequency, ctx.currentTime);
-        
-        gainNode.gain.setValueAtTime(1, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-
-        oscillator.connect(gainNode);
-        gainNode.connect(ctx.destination);
-
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + duration);
-    };
-
-    // 音声のプリセット
-    const playSound1 = () => playBeep(880, 'sine', 0.15);    // 条件一致：ピポッ（高音）
-    const playSound2 = () => playBeep(220, 'sawtooth', 0.3); // 条件不一致：ブー（低音）
-
-    /**
-     * 画面上のログ領域への追記処理
-     * @param {string} text - 読み取った文字列
-     * @param {boolean} isPattern1 - 4文字目が1か
-     */
-    const appendLog = (text, isPattern1) => {
-        const logArea = document.getElementById('log-area');
-        const timeStr = new Date().toLocaleTimeString();
-        const statusHtml = isPattern1 
-            ? `<span class="success-text">[条件一致]</span>` 
-            : `<span class="error-text">[条件不一致]</span>`;
-        
-        const logHtml = `<div class="log-item">${timeStr} : ${statusHtml} ${text}</div>`;
-        logArea.insertAdjacentHTML('afterbegin', logHtml);
-    };
-
-    /**
-     * バーコード読み取り成功時のメインロジック処理
-     * @param {string} decodedText - 読み取った文字列
-     */
-    const handleScanSuccess = (decodedText) => {
-        const now = Date.now();
-
-        // 1. チャタリング防止（直近と同じ文字列、かつクールダウン時間内の場合は処理をスキップ）
-        const isSameText = (decodedText === state.lastScannedText);
-        const isCoolingDown = (now - state.lastScannedTime) < state.cooldownMs;
-        if (isSameText && isCoolingDown) {
-            return; 
-        }
-
-        // 状態の更新
-        state.lastScannedText = decodedText;
-        state.lastScannedTime = now;
-
-        // 2. ロジック判定（左から4文字目 = インデックス3 をチェック）
-        const targetChar = decodedText.charAt(3);
-        const isPattern1 = (targetChar === '1');
-
-        // 3. 音声再生とUI更新（副作用の実行）
-        if (isPattern1) {
-            playSound1();
-        } else {
-            playSound2();
-        }
-        
-        appendLog(decodedText, isPattern1);
-    };
-
-/**
-     * カメラ起動処理（背面カメラ優先制御）
-     */
-    const startScanner = () => {
-        document.getElementById('btn-start').disabled = true;
-        document.getElementById('btn-stop').disabled = false;
-
-        if (!state.audioContext) {
-            state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        state.audioContext.resume();
-
-        state.html5QrCode = new Html5Qrcode("reader");
-
-        const config = { 
-            fps: 10, 
-            qrbox: { width: 250, height: 100 }, 
-            aspectRatio: 1.0,
-            videoConstraints: { width: { ideal: 1280 } } 
-        };
-        
-        // 【ここを修正】背面カメラ（environment）を優先する設定
-        const cameraConfig = { 
-            facingMode: "environment" 
-        };
-
-        state.html5QrCode.start(
-            cameraConfig, 
-            config, 
-            handleScanSuccess, 
-            (errorMessage) => { /* 無視 */ }
-        ).catch((err) => {
-            alert(`カメラの起動に失敗しました: ${err}`);
-            resetButtons();
-        });
-    };
-    
-    /**
-     * カメラ停止処理
-     */
-    const stopScanner = () => {
-        if (state.html5QrCode) {
-            state.html5QrCode.stop().then(() => {
-                state.html5QrCode.clear();
-                resetButtons();
-            }).catch(err => {
-                console.error("停止エラー", err);
-            });
-        }
-    };
-
-    const resetButtons = () => {
-        document.getElementById('btn-start').disabled = false;
-        document.getElementById('btn-stop').disabled = true;
-    };
-
-    // イベントリスナーの登録
-    window.addEventListener('DOMContentLoaded', () => {
-        document.getElementById('btn-start').addEventListener('click', startScanner);
-        document.getElementById('btn-stop').addEventListener('click', stopScanner);
-    });
-
+(()=>{
+const st={qr:null,ctx:null,last:"",time:0,cool:2000};
+const beep=(f,t,d)=>{st.ctx??=new(window.AudioContext||window.webkitAudioContext)();const c=st.ctx,o=c.createOscillator(),g=c.createGain();o.type=t;o.frequency.value=f;o.connect(g);g.connect(c.destination);g.gain.setValueAtTime(1,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+d);o.start();o.stop(c.currentTime+d);}
+const ok=()=>beep(880,"sine",.15),ng=()=>beep(220,"sawtooth",.3);
+const log=(txt,flag)=>document.querySelector("#log").insertAdjacentHTML("afterbegin",`<div>${new Date().toLocaleTimeString()} ${flag?'<span class="ok">OK</span>':'<span class="ng">NG</span>'} ${txt}</div>`);
+const scan=txt=>{const n=Date.now();if(txt===st.last&&n-st.time<st.cool)return;st.last=txt;st.time=n;const f=txt.charAt(3)==="1";f?ok():ng();log(txt,f);}
+async function backId(){
+ await navigator.mediaDevices.getUserMedia({video:true}).then(s=>s.getTracks().forEach(t=>t.stop()));
+ const cams=await Html5Qrcode.getCameras();
+ const keys=["back","rear","environment","背面","後","wide","ultra"];
+ const hit=cams.find(c=>keys.some(k=>(c.label||"").toLowerCase().includes(k)));
+ return {id:(hit||cams[cams.length-1]||cams[0]).id,cams};
+}
+async function start(){
+ document.start.disabled=true;document.stop.disabled=false;
+ st.ctx??=new(window.AudioContext||window.webkitAudioContext)();await st.ctx.resume();
+ st.qr=new Html5Qrcode("reader");
+ const cfg={fps:15,qrbox:{width:260,height:120}};
+ try{
+  const {id}=await backId();
+  await st.qr.start(id,cfg,scan);
+ }catch(e){
+  try{
+   await st.qr.start({facingMode:{exact:"environment"}},cfg,scan);
+  }catch{
+   await st.qr.start({facingMode:"environment"},cfg,scan);
+  }
+ }
+}
+async function stop(){
+ if(st.qr){await st.qr.stop();await st.qr.clear();}
+ document.start.disabled=false;document.stop.disabled=true;
+}
+document.querySelector("#start").onclick=start;
+document.querySelector("#stop").onclick=stop;
 })();
 </script>
-
 </body>
 </html>
