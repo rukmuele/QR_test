@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>マイクロQRスキャナー (ZXing版)</title>
+    <title>マイクロQRスキャナー (修正版)</title>
     <script src="https://unpkg.com/@zxing/library@latest"></script>
     <style>
         body { font-family: sans-serif; margin: 10px; background: #f0f4f8; text-align: center; }
@@ -43,7 +43,6 @@
         cooldownMs: 2000
     };
 
-    // 音声出力（Web Audio API）
     const playBeep = (freq, type, duration) => {
         if (!state.audioContext) state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const osc = state.audioContext.createOscillator();
@@ -57,7 +56,6 @@
         osc.stop(state.audioContext.currentTime + duration);
     };
 
-    // ログ記録と判定
     const handleScanSuccess = (decodedText) => {
         const now = Date.now();
         if (decodedText === state.lastScannedText && (now - state.lastScannedTime) < state.cooldownMs) return;
@@ -67,10 +65,8 @@
 
         const isPattern1 = (decodedText.charAt(3) === '1');
         
-        // 音声フィードバック
         isPattern1 ? playBeep(880, 'sine', 0.15) : playBeep(220, 'sawtooth', 0.3);
         
-        // UI更新
         const logArea = document.getElementById('log-area');
         const status = isPattern1 ? '<span class="success-text">[条件一致]</span>' : '<span class="error-text">[条件不一致]</span>';
         logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} : ${status} ${decodedText}</div>`);
@@ -83,14 +79,20 @@
         const videoEl = document.getElementById('camera-video');
         
         try {
-            // 背面カメラ優先設定でストリーム取得
             const videoInputDevices = await state.codeReader.listVideoInputDevices();
             const selectedDeviceId = videoInputDevices.find(device => /back|rear|environment/i.test(device.label))?.deviceId || videoInputDevices[0].deviceId;
 
             await state.codeReader.decodeFromVideoDevice(selectedDeviceId, videoEl, (result, err) => {
-                if (result) handleScanSuccess(result.getText());
+                // 読み取り成功時のみ処理し、かつ期待するデータ長があるかチェック
+                if (result) {
+                    const text = result.getText();
+                    if (text && text.length > 3) {
+                        handleScanSuccess(text);
+                    }
+                }
             });
         } catch (err) {
+            console.error(err);
             alert(`起動エラー: ${err}`);
             stopScanner();
         }
