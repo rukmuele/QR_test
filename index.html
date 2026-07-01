@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>マイクロQRスキャナー (修正版)</title>
+    <title>マイクロQRスキャナー (音響対応版)</title>
     <script src="https://unpkg.com/@zxing/library@latest"></script>
     <style>
         body { font-family: sans-serif; margin: 10px; background: #f0f4f8; text-align: center; }
@@ -43,17 +43,36 @@
         cooldownMs: 2000
     };
 
-    const playBeep = (freq, type, duration) => {
+    // 音声出力用ヘルパー関数
+    const playSound = (type) => {
         if (!state.audioContext) state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = state.audioContext.createOscillator();
-        const gain = state.audioContext.createGain();
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, state.audioContext.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, state.audioContext.currentTime + duration);
-        osc.connect(gain);
-        gain.connect(state.audioContext.destination);
-        osc.start();
-        osc.stop(state.audioContext.currentTime + duration);
+        const ctx = state.audioContext;
+
+        if (type === 'success') {
+            // ピンポン：440Hz -> 880Hz
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.frequency.setValueAtTime(440, ctx.currentTime);
+            osc.frequency.linearRampToValueAtTime(880, ctx.currentTime + 0.1);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+            osc.stop(ctx.currentTime + 0.2);
+        } else {
+            // ブブー：150Hzを短く2回
+            [0, 0.15].forEach(delay => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, ctx.currentTime + delay);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(ctx.currentTime + delay);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.1);
+                osc.stop(ctx.currentTime + delay + 0.1);
+            });
+        }
     };
 
     const handleScanSuccess = (decodedText) => {
@@ -65,7 +84,8 @@
 
         const isPattern1 = (decodedText.charAt(3) === '1');
         
-        isPattern1 ? playBeep(880, 'sine', 0.15) : playBeep(220, 'sawtooth', 0.3);
+        // 音を鳴らす
+        playSound(isPattern1 ? 'success' : 'error');
         
         const logArea = document.getElementById('log-area');
         const status = isPattern1 ? '<span class="success-text">[条件一致]</span>' : '<span class="error-text">[条件不一致]</span>';
@@ -83,7 +103,6 @@
             const selectedDeviceId = videoInputDevices.find(device => /back|rear|environment/i.test(device.label))?.deviceId || videoInputDevices[0].deviceId;
 
             await state.codeReader.decodeFromVideoDevice(selectedDeviceId, videoEl, (result, err) => {
-                // 読み取り成功時のみ処理し、かつ期待するデータ長があるかチェック
                 if (result) {
                     const text = result.getText();
                     if (text && text.length > 3) {
