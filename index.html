@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GS1対応バーコードスキャナー</title>
+    <title>マルチバーコードスキャナー</title>
     <script src="https://unpkg.com/@zxing/library@latest"></script>
     <style>
         body { font-family: sans-serif; margin: 10px; background: #f0f4f8; text-align: center; }
@@ -16,12 +16,13 @@
         #log-area { margin-top: 15px; text-align: left; max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; border: 1px solid #dee2e6; font-family: monospace; font-size: 14px; }
         .log-item { border-bottom: 1px dashed #ccc; padding: 4px 0; }
         .success-text { color: #28a745; font-weight: bold; }
+        .error-text { color: #dc3545; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>GS1対応スキャナー</h2>
+    <h2>マルチバーコードスキャナー</h2>
     <video id="camera-video"></video>
     <div>
         <button id="btn-start" class="btn btn-start">スキャン開始</button>
@@ -34,15 +35,15 @@
 (() => {
     'use strict';
 
-const hints = new Map([
-    [ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-        ZXing.BarcodeFormat.QR_CODE,
-        ZXing.BarcodeFormat.MICRO_QR_CODE,
-        ZXing.BarcodeFormat.DATA_MATRIX,
-        ZXing.BarcodeFormat.CODE_128
-    ]],
-    [ZXing.DecodeHintType.TRY_HARDER, true]
-]);
+    const hints = new Map([
+        [ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+            ZXing.BarcodeFormat.QR_CODE,
+            ZXing.BarcodeFormat.MICRO_QR_CODE,
+            ZXing.BarcodeFormat.DATA_MATRIX,
+            ZXing.BarcodeFormat.CODE_128
+        ]],
+        [ZXing.DecodeHintType.TRY_HARDER, true]
+    ]);
 
     const state = {
         codeReader: new ZXing.BrowserMultiFormatReader(hints),
@@ -52,71 +53,74 @@ const hints = new Map([
         cooldownMs: 1500
     };
 
-    const parseGS1 = (text) => {
-        // FNC1 (ASCII 29) を置換して可視化
-        return text.replace(/\x1D/g, ')(');
-    };
-
-    const playSuccessSound = () => {
+    const playSound = (isSuccess) => {
         if (!state.audioContext) state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const ctx = state.audioContext;
-        [587.33, 880.00].forEach((freq, i) => {
+        if (isSuccess) {
+            // ピンポン音
+            [587.33, 880.00].forEach((f, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.frequency.setValueAtTime(f, ctx.currentTime + i * 0.15);
+                gain.gain.setValueAtTime(0.3, ctx.currentTime + i * 0.15);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 0.15);
+                osc.connect(gain); gain.connect(ctx.destination);
+                osc.start(ctx.currentTime + i * 0.15); osc.stop(ctx.currentTime + i * 0.15 + 0.15);
+            });
+        } else {
+            // エラー音
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
-            osc.frequency.setValueAtTime(freq, ctx.currentTime + (i * 0.15));
-            gain.gain.setValueAtTime(0.3, ctx.currentTime + (i * 0.15));
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (i * 0.15) + 0.15);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(ctx.currentTime + (i * 0.15));
-            osc.stop(ctx.currentTime + (i * 0.15) + 0.15);
-        });
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(110.00, ctx.currentTime);
+            gain.gain.setValueAtTime(0.3, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.start(); osc.stop(ctx.currentTime + 0.5);
+        }
     };
 
-    const stopScanner = () => {
-        state.codeReader.reset();
-        document.getElementById('btn-start').disabled = false;
-        document.getElementById('btn-stop').disabled = true;
-    };
-
-    const handleScanSuccess = (decodedText) => {
+    const handleScan = (result) => {
+        const text = result.getText();
+        const format = result.getBarcodeFormat();
         const now = Date.now();
-        if (decodedText === state.lastScannedText && (now - state.lastScannedTime) < state.cooldownMs) return;
 
-        state.lastScannedText = decodedText;
+        if (text === state.lastScannedText && (now - state.lastScannedTime) < state.cooldownMs) return;
+        state.lastScannedText = text;
         state.lastScannedTime = now;
-        playSuccessSound();
 
-        const formatted = parseGS1(decodedText);
+        const isMicroQR = (format === ZXing.BarcodeFormat.MICRO_QR_CODE);
+        let isSuccess = true;
+        let displayType = "GS1/その他";
+
+        if (isMicroQR) {
+            displayType = "MicroQR";
+            isSuccess = (text.charAt(3) === '1');
+            playSound(isSuccess);
+        } else {
+            // GS1等の場合は無条件で成功音
+            playSound(true);
+        }
+
         const logArea = document.getElementById('log-area');
-        logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} : <span class="success-text">${formatted}</span></div>`);
+        const colorClass = isSuccess ? 'success-text' : 'error-text';
+        logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} [${displayType}] : <span class="${colorClass}">${text.replace(/\x1D/g, ')(')}</span></div>`);
     };
 
     const startScanner = async () => {
         document.getElementById('btn-start').disabled = true;
         document.getElementById('btn-stop').disabled = false;
-        
-        const constraints = {
-            video: {
-                facingMode: { ideal: 'environment' },
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            }
-        };
-
         try {
-            await state.codeReader.decodeFromConstraints(constraints, document.getElementById('camera-video'), (result, err) => {
-                if (result) handleScanSuccess(result.getText());
+            await state.codeReader.decodeFromConstraints({
+                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+            }, document.getElementById('camera-video'), (result, err) => {
+                if (result) handleScan(result);
             });
-        } catch (err) {
-            console.error(err);
-            alert(`起動エラー: ${err}`);
-            stopScanner();
-        }
+        } catch (err) { alert(err); }
     };
 
     document.getElementById('btn-start').addEventListener('click', startScanner);
-    document.getElementById('btn-stop').addEventListener('click', stopScanner);
+    document.getElementById('btn-stop').addEventListener('click', () => { state.codeReader.reset(); document.getElementById('btn-start').disabled = false; document.getElementById('btn-stop').disabled = true; });
 })();
 </script>
 </body>
