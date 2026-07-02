@@ -91,28 +91,35 @@
         logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} : ${status} ${decodedText}</div>`);
     };
 
-    const startScanner = async () => {
-        document.getElementById('btn-start').disabled = true;
-        document.getElementById('btn-stop').disabled = false;
-        const videoEl = document.getElementById('camera-video');
+const startScanner = async () => {
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled = false;
+    const videoEl = document.getElementById('camera-video');
 
-        try {
-            const devices = await state.codeReader.listVideoInputDevices();
-            const id = devices.find(d => /back|rear|environment/i.test(d.label))?.deviceId || devices[0]?.deviceId;
-            
-            await state.codeReader.decodeFromVideoDevice(id, videoEl, (result) => {
-                if (result) {
-                    const text = result.getText();
-                    if (text && text.length > 3) handleScanSuccess(text);
-                }
-            });
-        } catch (err) {
-            console.error(err);
-            alert(`起動エラー: ${err}`);
-            stopScanner();
+    // フォーカス設定を含めた制約の定義
+    const constraints = {
+        video: {
+            // 背面カメラを優先
+            facingMode: { ideal: 'environment' },
+            // フォーカスモードを連続オートフォーカスに設定
+            advanced: [{ focusMode: 'continuous' }]
         }
     };
 
+    try {
+        // ZXingのデコード処理にconstraintsを渡す
+        await state.codeReader.decodeFromConstraints(constraints, videoEl, (result) => {
+            if (result) {
+                const text = result.getText();
+                if (text && text.length > 3) handleScanSuccess(text);
+            }
+        });
+    } catch (err) {
+        console.error(err);
+        alert(`起動エラー: ${err}`);
+        stopScanner();
+    }
+};
     document.getElementById('btn-start').addEventListener('click', startScanner);
     document.getElementById('btn-stop').addEventListener('click', stopScanner);
 })();
