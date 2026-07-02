@@ -3,12 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>マルチバーコードスキャナー</title>
+    <title>高速マルチバーコードスキャナー</title>
     <script src="https://unpkg.com/@zxing/library@latest"></script>
     <style>
         body { font-family: sans-serif; margin: 10px; background: #f0f4f8; text-align: center; }
         .container { max-width: 500px; margin: 0 auto; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        video { width: 100%; min-height: 250px; background: #000; margin-bottom: 15px; border-radius: 4px; object-fit: cover; }
+        /* 正方形に固定 */
+        video { 
+            width: 100%; 
+            aspect-ratio: 1 / 1; 
+            background: #000; 
+            margin-bottom: 15px; 
+            border-radius: 4px; 
+            object-fit: cover; 
+        }
         .btn { padding: 12px 24px; font-size: 16px; font-weight: bold; color: #fff; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
         .btn-start { background-color: #007bff; }
         .btn-stop { background-color: #dc3545; }
@@ -22,7 +30,7 @@
 <body>
 
 <div class="container">
-    <h2>マルチバーコードスキャナー</h2>
+    <h2>スキャナー</h2>
     <video id="camera-video"></video>
     <div>
         <button id="btn-start" class="btn btn-start">スキャン開始</button>
@@ -35,14 +43,14 @@
 (() => {
     'use strict';
 
+    // 認識対象のフォーマットを指定
     const hints = new Map([
         [ZXing.DecodeHintType.POSSIBLE_FORMATS, [
             ZXing.BarcodeFormat.QR_CODE,
             ZXing.BarcodeFormat.MICRO_QR_CODE,
             ZXing.BarcodeFormat.DATA_MATRIX,
             ZXing.BarcodeFormat.CODE_128
-        ]],
-        [ZXing.DecodeHintType.TRY_HARDER, true]
+        ]]
     ]);
 
     const state = {
@@ -56,28 +64,15 @@
     const playSound = (isSuccess) => {
         if (!state.audioContext) state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const ctx = state.audioContext;
-        if (isSuccess) {
-            // ピンポン音
-            [587.33, 880.00].forEach((f, i) => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.frequency.setValueAtTime(f, ctx.currentTime + i * 0.15);
-                gain.gain.setValueAtTime(0.3, ctx.currentTime + i * 0.15);
-                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 0.15);
-                osc.connect(gain); gain.connect(ctx.destination);
-                osc.start(ctx.currentTime + i * 0.15); osc.stop(ctx.currentTime + i * 0.15 + 0.15);
-            });
-        } else {
-            // エラー音
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'sawtooth';
-            osc.frequency.setValueAtTime(110.00, ctx.currentTime);
-            gain.gain.setValueAtTime(0.3, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-            osc.connect(gain); gain.connect(ctx.destination);
-            osc.start(); osc.stop(ctx.currentTime + 0.5);
-        }
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.frequency.setValueAtTime(isSuccess ? 880 : 110, ctx.currentTime);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(); osc.stop(ctx.currentTime + 0.3);
     };
 
     const handleScan = (result) => {
@@ -89,38 +84,42 @@
         state.lastScannedText = text;
         state.lastScannedTime = now;
 
-        const isMicroQR = (format === ZXing.BarcodeFormat.MICRO_QR_CODE);
+        // 判定ロジック
         let isSuccess = true;
-        let displayType = "GS1/その他";
-
-        if (isMicroQR) {
-            displayType = "MicroQR";
+        if (format === ZXing.BarcodeFormat.MICRO_QR_CODE) {
             isSuccess = (text.charAt(3) === '1');
-            playSound(isSuccess);
-        } else {
-            // GS1等の場合は無条件で成功音
-            playSound(true);
         }
+        
+        playSound(isSuccess);
 
         const logArea = document.getElementById('log-area');
         const colorClass = isSuccess ? 'success-text' : 'error-text';
-        logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} [${displayType}] : <span class="${colorClass}">${text.replace(/\x1D/g, ')(')}</span></div>`);
+        // 制御文字(\x1D)を可視化
+        const safeText = text.replace(/[\x00-\x1F\x7F]/g, (m) => `[${m.charCodeAt(0)}]`);
+        
+        logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} [${format}] : <span class="${colorClass}">${safeText}</span></div>`);
     };
 
     const startScanner = async () => {
         document.getElementById('btn-start').disabled = true;
         document.getElementById('btn-stop').disabled = false;
+        
         try {
+            // 高速化：解像度を640x480に指定
             await state.codeReader.decodeFromConstraints({
-                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-            }, document.getElementById('camera-video'), (result, err) => {
+                video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }
+            }, 'camera-video', (result, err) => {
                 if (result) handleScan(result);
             });
-        } catch (err) { alert(err); }
+        } catch (err) { alert('起動失敗：' + err); }
     };
 
     document.getElementById('btn-start').addEventListener('click', startScanner);
-    document.getElementById('btn-stop').addEventListener('click', () => { state.codeReader.reset(); document.getElementById('btn-start').disabled = false; document.getElementById('btn-stop').disabled = true; });
+    document.getElementById('btn-stop').addEventListener('click', () => { 
+        state.codeReader.reset(); 
+        document.getElementById('btn-start').disabled = false; 
+        document.getElementById('btn-stop').disabled = true; 
+    });
 })();
 </script>
 </body>
