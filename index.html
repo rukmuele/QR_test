@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>マイクロQRスキャナー</title>
+    <title>GS1対応バーコードスキャナー</title>
     <script src="https://unpkg.com/@zxing/library@latest"></script>
     <style>
         body { font-family: sans-serif; margin: 10px; background: #f0f4f8; text-align: center; }
@@ -16,13 +16,12 @@
         #log-area { margin-top: 15px; text-align: left; max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; border: 1px solid #dee2e6; font-family: monospace; font-size: 14px; }
         .log-item { border-bottom: 1px dashed #ccc; padding: 4px 0; }
         .success-text { color: #28a745; font-weight: bold; }
-        .error-text { color: #dc3545; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>マイクロQRスキャナー</h2>
+    <h2>GS1対応スキャナー</h2>
     <video id="camera-video"></video>
     <div>
         <button id="btn-start" class="btn btn-start">スキャン開始</button>
@@ -35,39 +34,43 @@
 (() => {
     'use strict';
 
+    // GS1対応のためにフォーマットを明示
+    const hints = new Map([
+        [ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+            ZXing.BarcodeFormat.QR_CODE,
+            ZXing.BarcodeFormat.DATA_MATRIX,
+            ZXing.BarcodeFormat.CODE_128
+        ]],
+        [ZXing.DecodeHintType.TRY_HARDER, true]
+    ]);
+
     const state = {
-        codeReader: new ZXing.BrowserMultiFormatReader(),
+        codeReader: new ZXing.BrowserMultiFormatReader(hints),
         audioContext: null,
         lastScannedText: '',
         lastScannedTime: 0,
-        cooldownMs: 1000
+        cooldownMs: 1500
     };
 
-    const playSound = (type) => {
-        if (!state.audioContext) {
-            state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        const ctx = state.audioContext;
+    const parseGS1 = (text) => {
+        // FNC1 (ASCII 29) を置換して可視化
+        return text.replace(/\x1D/g, ')(');
+    };
 
-        const createTone = (freq, start, duration, type = 'sine') => {
+    const playSuccessSound = () => {
+        if (!state.audioContext) state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const ctx = state.audioContext;
+        [587.33, 880.00].forEach((freq, i) => {
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
-            osc.type = type;
-            osc.frequency.setValueAtTime(freq, start);
-            gain.gain.setValueAtTime(0.3, start);
-            gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+            osc.frequency.setValueAtTime(freq, ctx.currentTime + (i * 0.15));
+            gain.gain.setValueAtTime(0.3, ctx.currentTime + (i * 0.15));
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (i * 0.15) + 0.15);
             osc.connect(gain);
             gain.connect(ctx.destination);
-            osc.start(start);
-            osc.stop(start + duration);
-        };
-
-        if (type === 'success') {
-            createTone(587.33, ctx.currentTime, 0.15);
-            createTone(880.00, ctx.currentTime + 0.15, 0.3);
-        } else {
-            createTone(110.00, ctx.currentTime, 0.5, 'sawtooth');
-        }
+            osc.start(ctx.currentTime + (i * 0.15));
+            osc.stop(ctx.currentTime + (i * 0.15) + 0.15);
+        });
     };
 
     const stopScanner = () => {
@@ -82,44 +85,36 @@
 
         state.lastScannedText = decodedText;
         state.lastScannedTime = now;
+        playSuccessSound();
 
-        const isPattern1 = (decodedText.charAt(3) === '1');
-        playSound(isPattern1 ? 'success' : 'error');
-
+        const formatted = parseGS1(decodedText);
         const logArea = document.getElementById('log-area');
-        const status = isPattern1 ? '<span class="success-text">[4桁目：1]</span>' : '<span class="error-text">[4桁目：1以外]</span>';
-        logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} : ${status} ${decodedText}</div>`);
+        logArea.insertAdjacentHTML('afterbegin', `<div class="log-item">${new Date().toLocaleTimeString()} : <span class="success-text">${formatted}</span></div>`);
     };
 
-const startScanner = async () => {
-    document.getElementById('btn-start').disabled = true;
-    document.getElementById('btn-stop').disabled = false;
-    const videoEl = document.getElementById('camera-video');
+    const startScanner = async () => {
+        document.getElementById('btn-start').disabled = true;
+        document.getElementById('btn-stop').disabled = false;
+        
+        const constraints = {
+            video: {
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        };
 
-    // フォーカス設定を含めた制約の定義
-    const constraints = {
-        video: {
-            // 背面カメラを優先
-            facingMode: { ideal: 'environment' },
-            // フォーカスモードを連続オートフォーカスに設定
-            advanced: [{ focusMode: 'continuous' }]
+        try {
+            await state.codeReader.decodeFromConstraints(constraints, document.getElementById('camera-video'), (result, err) => {
+                if (result) handleScanSuccess(result.getText());
+            });
+        } catch (err) {
+            console.error(err);
+            alert(`起動エラー: ${err}`);
+            stopScanner();
         }
     };
 
-    try {
-        // ZXingのデコード処理にconstraintsを渡す
-        await state.codeReader.decodeFromConstraints(constraints, videoEl, (result) => {
-            if (result) {
-                const text = result.getText();
-                if (text && text.length > 3) handleScanSuccess(text);
-            }
-        });
-    } catch (err) {
-        console.error(err);
-        alert(`起動エラー: ${err}`);
-        stopScanner();
-    }
-};
     document.getElementById('btn-start').addEventListener('click', startScanner);
     document.getElementById('btn-stop').addEventListener('click', stopScanner);
 })();
