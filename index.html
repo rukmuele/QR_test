@@ -34,15 +34,15 @@
 (() => {
     'use strict';
 
-    // GS1対応のためにフォーマットを明示
-    const hints = new Map([
-        [ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-            ZXing.BarcodeFormat.QR_CODE,
-            ZXing.BarcodeFormat.DATA_MATRIX,
-            ZXing.BarcodeFormat.CODE_128
-        ]],
-        [ZXing.DecodeHintType.TRY_HARDER, true]
-    ]);
+const hints = new Map([
+    [ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        ZXing.BarcodeFormat.QR_CODE,
+        ZXing.BarcodeFormat.MICRO_QR_CODE,
+        ZXing.BarcodeFormat.DATA_MATRIX,
+        ZXing.BarcodeFormat.CODE_128
+    ]],
+    [ZXing.DecodeHintType.TRY_HARDER, true]
+]);
 
     const state = {
         codeReader: new ZXing.BrowserMultiFormatReader(hints),
